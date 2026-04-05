@@ -248,7 +248,7 @@ services:
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "False"
       AIRFLOW__WEBSERVER__WORKERS: "1"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      TRINO_HOST: host.docker.internal
+      TRINO_HOST: trino
       TRINO_PORT: "8080"
       TRINO_CATALOG: iceberg
       TRINO_SCHEMA: payments
@@ -287,7 +287,7 @@ services:
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "False"
       AIRFLOW__SCHEDULER__PARSING_PROCESSES: "1"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      TRINO_HOST: host.docker.internal
+      TRINO_HOST: trino
       TRINO_PORT: "8080"
       TRINO_CATALOG: iceberg
       TRINO_SCHEMA: payments

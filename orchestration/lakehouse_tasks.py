@@ -4,6 +4,7 @@ import csv
 import logging
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -28,10 +29,70 @@ def _trino_connection():
     )
 
 
+def _trino_query(
+    statement: str,
+    retries: int = 20,
+    retry_sleep_seconds: int = 5,
+) -> tuple[list[tuple[object, ...]], list[tuple]]:
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
+        conn = None
+        try:
+            conn = _trino_connection()
+            cursor = conn.cursor()
+            cursor.execute(statement)
+            rows = cursor.fetchall()
+            description = cursor.description or []
+            return rows, description
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt == retries:
+                break
+            LOGGER.warning(
+                "Trino no disponible (intento %s/%s). Reintentando en %ss. Error: %s",
+                attempt,
+                retries,
+                retry_sleep_seconds,
+                exc,
+            )
+            time.sleep(retry_sleep_seconds)
+        finally:
+            if conn is not None:
+                conn.close()
+
+    raise RuntimeError(f"No se pudo ejecutar consulta en Trino tras {retries} intentos: {last_error}")
+
+
 def _validate_identifier(value: str, label: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_]+", value):
         raise ValueError(f"{label} invalido: {value}")
     return value
+
+
+def _resolve_table_reference(table_ref: str) -> tuple[str, str, str]:
+    raw = table_ref.strip()
+    if raw == "":
+        raise ValueError("table_ref no puede estar vacio")
+
+    parts = raw.split(".")
+    default_catalog = _validate_identifier(os.getenv("TRINO_CATALOG", "iceberg"), "catalog")
+    default_schema = _validate_identifier(os.getenv("TRINO_SCHEMA", "payments"), "schema")
+
+    if len(parts) == 1:
+        return default_catalog, default_schema, _validate_identifier(parts[0], "table")
+    if len(parts) == 2:
+        return (
+            default_catalog,
+            _validate_identifier(parts[0], "schema"),
+            _validate_identifier(parts[1], "table"),
+        )
+    if len(parts) == 3:
+        return (
+            _validate_identifier(parts[0], "catalog"),
+            _validate_identifier(parts[1], "schema"),
+            _validate_identifier(parts[2], "table"),
+        )
+    raise ValueError(f"table_ref invalido: {table_ref}")
 
 
 def _normalize_iso8601(value: str | None) -> str | None:
@@ -42,29 +103,95 @@ def _normalize_iso8601(value: str | None) -> str | None:
 
 
 def compact_table(table_name: str) -> None:
-    safe_table = _validate_identifier(table_name, "table_name")
-    catalog = os.getenv("TRINO_CATALOG", "iceberg")
-    schema = os.getenv("TRINO_SCHEMA", "payments")
+    catalog, schema, table = _resolve_table_reference(table_name)
     statement = (
-        f"ALTER TABLE {catalog}.{schema}.{safe_table} "
+        f"ALTER TABLE {catalog}.{schema}.{table} "
         "EXECUTE optimize(file_size_threshold => '64MB')"
     )
-    conn = _trino_connection()
     try:
-        cursor = conn.cursor()
-        cursor.execute(statement)
-        cursor.fetchall()
+        _trino_query(statement)
     except Exception as exc:
         # Si Trino va justo de memoria, este optimize puede cortar la conexión.
         # Para la demo no pasa nada: el grafo puede exportarse igual.
-        LOGGER.warning("Se omite la compactacion de %s.%s.%s: %s", catalog, schema, safe_table, exc)
-    finally:
-        conn.close()
+        LOGGER.warning("Se omite la compactacion de %s.%s.%s: %s", catalog, schema, table, exc)
 
 
-def _build_graph_query(start_ts: str | None, end_ts: str | None) -> str:
-    catalog = os.getenv("TRINO_CATALOG", "iceberg")
-    schema = os.getenv("TRINO_SCHEMA", "payments")
+def build_graph_dataset(
+    source_table: str,
+    graph_name: str,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+) -> str:
+    source_catalog, source_schema, source_name = _resolve_table_reference(source_table)
+    source_fqn = f"{source_catalog}.{source_schema}.{source_name}"
+
+    target_catalog = _validate_identifier(os.getenv("TRINO_CATALOG", "iceberg"), "catalog")
+    target_schema = _validate_identifier(os.getenv("TRINO_SCHEMA", "payments"), "schema")
+    safe_graph = _validate_identifier(graph_name, "graph_name")
+    target_table = f"graph_dataset_{safe_graph}"
+    target_fqn = f"{target_catalog}.{target_schema}.{target_table}"
+
+    normalized_start = _normalize_iso8601(start_ts)
+    normalized_end = _normalize_iso8601(end_ts)
+    predicates: list[str] = []
+    if normalized_start:
+        predicates.append(f"CAST(event_time AS TIMESTAMP WITH TIME ZONE) >= from_iso8601_timestamp('{normalized_start}')")
+    if normalized_end:
+        predicates.append(f"CAST(event_time AS TIMESTAMP WITH TIME ZONE) < from_iso8601_timestamp('{normalized_end}')")
+    where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+
+    describe_rows, _ = _trino_query(f"DESCRIBE {source_fqn}")
+    source_columns = {str(row[0]) for row in describe_rows}
+
+    required_columns = {"payment_id", "event_time", "customer_id", "card_id", "merchant_id", "device_id"}
+    missing_required = sorted(required_columns - source_columns)
+    if missing_required:
+        raise ValueError(f"La tabla origen {source_fqn} no tiene columnas requeridas: {', '.join(missing_required)}")
+
+    def col_expr(column: str, cast_expression: str, default_expression: str) -> str:
+        if column in source_columns:
+            return f"{cast_expression} AS {column}"
+        return f"{default_expression} AS {column}"
+
+    select_columns = [
+        col_expr("payment_id", "CAST(payment_id AS VARCHAR)", "''"),
+        col_expr("payment_group_id", "CAST(payment_group_id AS VARCHAR)", "''"),
+        col_expr(
+            "event_time",
+            "CAST(event_time AS TIMESTAMP WITH TIME ZONE)",
+            "from_iso8601_timestamp('1970-01-01T00:00:00Z')",
+        ),
+        col_expr("customer_id", "CAST(customer_id AS VARCHAR)", "''"),
+        col_expr("card_id", "CAST(card_id AS VARCHAR)", "''"),
+        col_expr("merchant_id", "CAST(merchant_id AS VARCHAR)", "''"),
+        col_expr("device_id", "CAST(device_id AS VARCHAR)", "''"),
+        col_expr("ip", "CAST(ip AS VARCHAR)", "''"),
+        col_expr("country", "CAST(country AS VARCHAR)", "''"),
+        col_expr("amount", "CAST(amount AS DOUBLE)", "0.0"),
+        col_expr("currency", "CAST(currency AS VARCHAR)", "''"),
+        col_expr("status", "CAST(status AS VARCHAR)", "''"),
+        col_expr("mcc", "CAST(mcc AS VARCHAR)", "''"),
+        col_expr("risk_score", "CAST(risk_score AS INTEGER)", "0"),
+        col_expr("reasons_text", "CAST(reasons_text AS VARCHAR)", "''"),
+        col_expr("is_alert", "CAST(is_alert AS BOOLEAN)", "false"),
+    ]
+
+    _trino_query(f"DROP TABLE IF EXISTS {target_fqn}")
+    _trino_query(
+        f"""
+        CREATE TABLE {target_fqn} AS
+        SELECT
+            {', '.join(select_columns)}
+        FROM {source_fqn}
+        {where_clause}
+        """
+    )
+
+    return target_table
+
+
+def _build_graph_query(start_ts: str | None, end_ts: str | None, source_table: str) -> str:
+    catalog, schema, table = _resolve_table_reference(source_table)
     predicates: list[str] = []
     if start_ts:
         predicates.append(f"event_time >= from_iso8601_timestamp('{start_ts}')")
@@ -90,21 +217,19 @@ def _build_graph_query(start_ts: str | None, end_ts: str | None) -> str:
         CAST(risk_score AS INTEGER) AS risk_score,
         reasons_text,
         is_alert
-    FROM {catalog}.{schema}.graph_payments
+    FROM {catalog}.{schema}.{table}
     {where_clause}
     """
 
 
-def fetch_graph_rows(start_ts: str | None, end_ts: str | None) -> list[dict[str, object]]:
-    query = _build_graph_query(_normalize_iso8601(start_ts), _normalize_iso8601(end_ts))
-    conn = _trino_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        columns = [column[0] for column in cursor.description]
-    finally:
-        conn.close()
+def fetch_graph_rows(
+    start_ts: str | None,
+    end_ts: str | None,
+    source_table: str = "graph_payments",
+) -> list[dict[str, object]]:
+    query = _build_graph_query(_normalize_iso8601(start_ts), _normalize_iso8601(end_ts), source_table)
+    rows, description = _trino_query(query)
+    columns = [column[0] for column in description]
     return [dict(zip(columns, row, strict=False)) for row in rows]
 
 
@@ -117,9 +242,14 @@ def _write_csvs(directory: Path, datasets: dict[str, tuple[list[str], Iterable[d
             writer.writerows(rows)
 
 
-def export_graph_dataset(graph_name: str, start_ts: str | None = None, end_ts: str | None = None) -> dict[str, int]:
+def export_graph_dataset(
+    graph_name: str,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+    source_table: str = "graph_payments",
+) -> dict[str, int]:
     safe_graph = _validate_identifier(graph_name, "graph_name")
-    rows = fetch_graph_rows(start_ts, end_ts)
+    rows = fetch_graph_rows(start_ts, end_ts, source_table=source_table)
 
     customers: dict[str, dict[str, object]] = {}
     cards: dict[str, dict[str, object]] = {}

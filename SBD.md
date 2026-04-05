@@ -2,7 +2,7 @@
 
 Aquí voy dejando lo nuevo que hacemos en esta tarea, que parte del proyecto de Carlos.
 
-## 2026-04-05 - Parte 1 (Generador Kafka)
+## Parte 1 (Generador Kafka)
 
 Archivos nuevos:
 - `SBD/Parte1/kafka_payment_generator.py`
@@ -21,7 +21,7 @@ Ejecución:
 Nota rápida:
 - se refactorizó para dejarlo en script secuencial (sin clases y sin `def`)
 
-## 2026-04-05 - Parte 2 (Bronze)
+## Parte 2 (Bronze)
 
 Archivos creados:
 - `SBD/Parte2/bronze_kafka_to_iceberg.py`
@@ -42,7 +42,7 @@ Nota:
 - para indicar otra tabla podemos usar: `--table nombre_tabla`
 - refactorizado a script secuencial (sin clases y sin `def`)
 
-## 2026-04-05 - Parte 3 (Silver)
+## Parte 3 (Silver)
 
 Archivos creados:
 - `SBD/Parte3/silver_bronze_enrichment.py`
@@ -71,7 +71,7 @@ Nota:
 - para cambiar tablas: `--source-table` y `--target-table`
 - refactorizado a script secuencial (sin clases y sin `def`)
 
-## 2026-04-05 - Parte 4 (Gold)
+## Parte 4 (Gold)
 
 Archivos creados:
 - `SBD/Parte4/gold_fraud_detection.py`
@@ -98,7 +98,7 @@ Nota:
   - `gold.payments_relations_parte4`
 - script secuencial (sin clases y sin `def`)
 
-## 2026-04-05 - Parte 5 (Consulta y visualizacion)
+## Parte 5 (Consulta y visualizacion)
 
 Archivos creados:
 - `SBD/Parte5/check_trino_parte5.sh`
@@ -120,14 +120,55 @@ Ejecucion:
 ./SBD/Parte5/check_trino_parte5.sh
 ```
 
-## 2026-04-05 - Ajuste por copia de carpeta
+## Parte 6 (Airflow bajo demanda)
 
-Para no mezclar esta copia con otros proyectos:
+Airflow ha dado muchos problemas y se solucionaron modificando `para que use
+la red interna de Docker
+
+Archivos creados:
+- `airflow/dags/fraud_graph_pipeline_on_demand_sbd.py`
+- `SBD/Parte6/trigger_dag_parte6.sh`
+- `SBD/Parte6/README.md`
+
+Archivos actualizados:
+- `orchestration/lakehouse_tasks.py`
+- `docker-compose.yml`
+
+Acciones que hace el DAG:
+- DAG manual con 4 pasos:
+  1) compacta tabla Iceberg
+  2) prepara dataset tabular para análisis de grafo
+  3) exporta CSV para Neo4j
+  4) carga en Neo4j
+- parámetros del DAG:
+  - `source_table`
+  - `start_ts`
+  - `end_ts`
+  - `graph_name`
+- se añadió preparación de dataset intermedio: `graph_dataset_<graph_name>`
+- se añadieron reintentos de conexión a Trino en tareas de orquestación
+- Airflow ahora usa `TRINO_HOST=trino` (red interna Docker)
+
+Ejecución:
+```bash
+./SBD/Parte6/trigger_dag_parte6.sh
+```
+
+Nota:
+- el DAG aparece en Airflow como `fraud_graph_pipeline_on_demand_sbd`
+
+## Ajuste por copia de carpeta
+Al llegar a este paso hemos cambiado el origin del repositorio porque he copiado
+la carpeta del proyecto de Carlos, para no aplicar los cambios sobre el original...
+ASí que he creado un repo nuevo para esta tarea, copiando el proyecto base y añadiendo
+la carpeta SBD para poner ahí las cosas nuevas...
+
+Otras cosas:
 - `docker-compose.yml` ahora usa nombre de proyecto `fraud-lakehouse-sbd`
 - se quitaron todos los `container_name` fijos
 - se reinició el stack completo
 
 Resultado:
 - los contenedores de esta carpeta quedan aislados
-- `spark` monta correctamente este path:
+- `spark` monta correctamente este path (que habrá que cambiarse en cada caso):
   - `/Users/jlrtutor/CE_IA_y_BigData/BDA/ProyectoT2-SBD`
