@@ -65,6 +65,12 @@ Neo4j ------> investigación relacional y de patrones sospechosos
 - macOS, Linux o Windows con virtualización activa
 - Recomendado: al menos 8 GB de RAM asignables a Docker
 
+Dependencias Python globales del proyecto:
+
+```bash
+pip install -r requirements.txt
+```
+
 Se han observado problemas de rendimiento en entornos con 8 GB de RAM,
 es recomendable operar por fases y parar servicios no necesarios durante la ejecución.
 

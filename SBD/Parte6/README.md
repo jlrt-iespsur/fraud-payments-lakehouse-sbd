@@ -5,6 +5,7 @@ DAG creado:
 
 Archivo:
 - `airflow/dags/fraud_graph_pipeline_on_demand_sbd.py`
+- `SBD/Parte6/trigger_dag_parte6.py`
 
 Flujo:
 1. compacta tabla Iceberg origen
@@ -20,14 +21,14 @@ Parámetros del DAG:
 
 Trigger rápido:
 ```bash
-./SBD/Parte6/trigger_dag_parte6.sh
+python3 SBD/Parte6/trigger_dag_parte6.py
 ```
 
 Ejemplo con rango temporal:
 ```bash
-SOURCE_TABLE=graph_payments \
-START_TS=2026-03-14T07:00:00Z \
-END_TS=2026-03-14T10:00:00Z \
-GRAPH_NAME=fraud_snapshot_demo \
-./SBD/Parte6/trigger_dag_parte6.sh
+python3 SBD/Parte6/trigger_dag_parte6.py \
+  --source-table graph_payments \
+  --start-ts 2026-03-14T07:00:00Z \
+  --end-ts 2026-03-14T10:00:00Z \
+  --graph-name fraud_snapshot_demo
 ```

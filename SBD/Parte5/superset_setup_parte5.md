@@ -6,6 +6,11 @@
 docker compose up -d trino superset
 ```
 
+Opcional (script Python):
+```bash
+python3 SBD/Parte5/setup_superset_trino_parte5.py
+```
+
 Superset queda en:
 - `http://localhost:8088`
 
@@ -21,6 +26,13 @@ trino://trino@host.docker.internal:8080/iceberg/payments
 ```
 
 4. Guarda y pulsa `Test Connection`
+
+Si quieres configurarlo por script:
+```bash
+python3 SBD/Parte5/setup_superset_trino_parte5.py \
+  --db-name trino_iceberg \
+  --trino-uri trino://trino@trino:8080/iceberg/payments
+```
 
 ## 3) Dataset principal
 

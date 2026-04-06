@@ -2,6 +2,17 @@
 
 Aquí voy dejando lo nuevo que hacemos en esta tarea, que parte del proyecto de Carlos.
 
+## Dependencias globales
+
+Se dejó un `requirements.txt` global en la raíz del proyecto para evitar dependencias separadas por servicio.
+
+Incluye lo necesario para ejecutar los pasos SBD en secuencia (Kafka generator, Trino/Neo4j tooling y exportación S3 de Parte 8, incluyendo `boto3` y soporte Parquet con `pyarrow`).
+
+Comando:
+```bash
+pip install -r requirements.txt
+```
+
 ## Parte 1 (Generador Kafka)
 
 Archivos nuevos:
@@ -101,7 +112,8 @@ Nota:
 ## Parte 5 (Consulta y visualizacion)
 
 Archivos creados:
-- `SBD/Parte5/check_trino_parte5.sh`
+- `SBD/Parte5/check_trino_parte5.py`
+- `SBD/Parte5/setup_superset_trino_parte5.py`
 - `SBD/Parte5/dashboard_queries_parte5.sql`
 - `SBD/Parte5/superset_setup_parte5.md`
 
@@ -117,7 +129,7 @@ Comprobacion hecha en Trino:
 
 Ejecucion:
 ```bash
-./SBD/Parte5/check_trino_parte5.sh
+python3 SBD/Parte5/check_trino_parte5.py
 ```
 
 ## Parte 6 (Airflow bajo demanda)
@@ -127,7 +139,7 @@ la red interna de Docker
 
 Archivos creados:
 - `airflow/dags/fraud_graph_pipeline_on_demand_sbd.py`
-- `SBD/Parte6/trigger_dag_parte6.sh`
+- `SBD/Parte6/trigger_dag_parte6.py`
 - `SBD/Parte6/README.md`
 
 Archivos actualizados:
@@ -151,11 +163,69 @@ Acciones que hace el DAG:
 
 Ejecución:
 ```bash
-./SBD/Parte6/trigger_dag_parte6.sh
+python3 SBD/Parte6/trigger_dag_parte6.py
 ```
 
 Nota:
 - el DAG aparece en Airflow como `fraud_graph_pipeline_on_demand_sbd`
+
+## Parte 7 (Modelo de grafo en Neo4j)
+
+Archivos creados:
+- `SBD/Parte7/modelo_grafo_parte7.cypher`
+- `SBD/Parte7/consultas_fraude_parte7.cypher`
+- `SBD/Parte7/load_graph_parte7.py`
+- `SBD/Parte7/run_queries_parte7.py`
+- `SBD/Parte7/README.md`
+
+Acciones:
+- modelado de nodos: `Customer`, `Card`, `Device`, `Merchant`, `Payment`
+- modelado de relaciones:
+  - `Customer` -> `Card` (`OWNS_CARD`)
+  - `Card` -> `Device` (`USED_ON`)
+  - `Card` -> `Payment` (`AUTHORIZED`)
+  - `Payment` -> `Merchant` (`AT_MERCHANT`)
+- consultas Cypher para detección:
+  - dispositivos compartidos por múltiples tarjetas
+  - tarjetas usadas en múltiples países
+  - comercios conectados a múltiples entidades sospechosas
+  - agrupaciones anómalas por dispositivo compartido
+
+Ejecución:
+```bash
+python3 SBD/Parte7/load_graph_parte7.py --graph-name fraud_snapshot_sbd
+python3 SBD/Parte7/run_queries_parte7.py --graph-name fraud_snapshot_sbd
+```
+
+## Parte 8 (Exportación Gold a S3)
+
+Archivos creados:
+- `SBD/Parte8/export_gold_to_s3_parte8.py`
+- `SBD/Parte8/README.md`
+
+Acciones:
+- lee desde Gold en Trino/Iceberg (por defecto `iceberg.payments.fraud_alerts`)
+- genera ficheros `json` o `parquet`
+- particiona por tiempo usando `event_time`:
+  - `gold/year=YYYY/month=MM/day=DD/fraud_alerts.json`
+- sube a S3 (o MinIO) usando `boto3`
+
+Ejecución:
+```bash
+python3 SBD/Parte8/export_gold_to_s3_parte8.py \
+  --source-table iceberg.payments.fraud_alerts \
+  --format json \
+  --bucket lakehouse \
+  --prefix gold \
+  --filename fraud_alerts \
+  --partition-column event_time \
+  --start-trino
+```
+
+Prueba sin subida:
+```bash
+python3 SBD/Parte8/export_gold_to_s3_parte8.py --dry-run --start-trino
+```
 
 ## Ajuste por copia de carpeta
 Al llegar a este paso hemos cambiado el origin del repositorio porque he copiado
