@@ -242,3 +242,27 @@ Resultado:
 - los contenedores de esta carpeta quedan aislados
 - `spark` monta correctamente este path (que habrá que cambiarse en cada caso):
   - `/Users/jlrtutor/CE_IA_y_BigData/BDA/ProyectoT2-SBD`
+
+## Parte 9 (S3 Silver -> RDS MySQL)
+
+Archivos creados:
+- `SBD/Parte9/silver_s3_to_rds_mysql_parte9.py`
+- `SBD/Parte9/run_parte9.sh`
+- `SBD/Parte9/README.md`
+
+Acciones:
+- lee Silver desde ruta S3 (`s3a://...`) con Spark
+- soporta MinIO local para simular S3
+- carga features en MySQL de RDS por JDBC
+
+Ejecución:
+```bash
+./SBD/Parte9/run_parte9.sh \
+  --source-path s3a://lakehouse/warehouse/payments/silver_payments_parte3/data \
+  --jdbc-url "jdbc:mysql://<rds-endpoint>:3306/fraud?useSSL=true&serverTimezone=UTC" \
+  --jdbc-user admin \
+  --jdbc-password 'tu_password' \
+  --target-database fraud \
+  --target-table silver_features \
+  --mode append
+```

@@ -4,10 +4,9 @@
 
 import argparse
 import os
-import time
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json
+from pyspark.sql.functions import col, current_timestamp, from_json
 from pyspark.sql.types import DoubleType, StringType, StructField, StructType
 
 
@@ -38,6 +37,10 @@ parser.add_argument("--catalog", default=os.getenv("ICEBERG_CATALOG", "lakehouse
 parser.add_argument("--database", default=os.getenv("ICEBERG_DATABASE", "payments"))
 parser.add_argument("--table", default="bronze_payments_parte2")
 parser.add_argument("--checkpoint", default="/opt/project/runtime/checkpoints/bronze_parte2")
+parser.add_argument("--starting-offsets", choices=["earliest", "latest"], default="earliest")
+parser.add_argument("--trigger", choices=["processing-time", "available-now"], default="processing-time")
+parser.add_argument("--processing-interval-seconds", type=int, default=5)
+parser.add_argument("--await-timeout-seconds", type=int, default=0)
 args = parser.parse_args()
 
 
@@ -95,7 +98,8 @@ spark.sql(
         amount DOUBLE,
         currency STRING,
         status STRING,
-        mcc STRING
+        mcc STRING,
+        ingestion_ts TIMESTAMP
     )
     USING iceberg
     """
@@ -107,30 +111,45 @@ kafka_stream = (
     spark.readStream.format("kafka")
     .option("kafka.bootstrap.servers", args.bootstrap_servers)
     .option("subscribe", args.topic)
-    .option("startingOffsets", "earliest")
+    .option("startingOffsets", args.starting_offsets)
+    .option("failOnDataLoss", "false")
     .load()
 )
 
-bronze_df = kafka_stream.select(from_json(col("value").cast("string"), payment_event_schema).alias("payload")).select(
-    "payload.*"
+# Parseo JSON de Kafka y descarte de mensajes corruptos (payload nulo).
+bronze_df = (
+    kafka_stream.select(from_json(col("value").cast("string"), payment_event_schema).alias("payload"))
+    .select("payload.*")
+    .filter(col("payment_id").isNotNull())
+    .withColumn("ingestion_ts", current_timestamp())
 )
 
-query = (
+# Definimos el writer una sola vez y solo variamos el trigger según el modo.
+writer = (
     bronze_df.writeStream.format("iceberg")
     .outputMode("append")
     .queryName("bronze_streaming_parte2")
     .option("checkpointLocation", args.checkpoint)
-    .trigger(processingTime="5 seconds")
-    .toTable(full_table_name)
 )
+
+if args.trigger == "available-now":
+    query = writer.trigger(availableNow=True).toTable(full_table_name)
+else:
+    query = writer.trigger(processingTime=f"{args.processing_interval_seconds} seconds").toTable(full_table_name)
 
 print(f"Bronze Parte2 iniciada en {full_table_name}: id={query.id}, run_id={query.runId}", flush=True)
 
-while query.isActive:
-    time.sleep(5)
+# Si se indica timeout, permitimos ejecución controlada y cierre limpio.
+if args.await_timeout_seconds > 0:
+    query.awaitTermination(args.await_timeout_seconds)
+    if query.isActive:
+        query.stop()
+else:
+    query.awaitTermination()
 
-# controlamos posibles casques
+# controlamos posibles errores al finalizar
 exception = query.exception()
 if exception is not None:
     raise RuntimeError(f"La query Bronze Parte2 se ha detenido con error: {exception}")
-raise RuntimeError("La query Bronze Parte2 ha generado un error y no se ha ejecutado")
+
+spark.stop()

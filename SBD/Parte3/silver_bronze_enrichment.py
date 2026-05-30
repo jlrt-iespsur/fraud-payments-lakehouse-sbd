@@ -140,6 +140,6 @@ silver = (
     )
 )
 
-# Escribimos en Silver
+# Escribimos finalmente en Silver
 silver.writeTo(target).using("iceberg").createOrReplace()
 spark.stop()

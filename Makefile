@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help setup-env start restart stop clean bronze generator silver gold trino
+.PHONY: help setup-env start restart stop clean bronze generator silver gold parte10-run parte11-run parte12-run trino
 
 help:
 	@echo "Targets disponibles:"
@@ -13,6 +13,9 @@ help:
 	@echo "  generator  - lanza el generador de eventos"
 	@echo "  silver     - ejecuta la transformacion Silver"
 	@echo "  gold       - ejecuta la transformacion Gold"
+	@echo "  parte10-run- ejecuta la Parte10 (S3 + RDS)"
+	@echo "  parte11-run- ejecuta la Parte11 (analisis Athena-like)"
+	@echo "  parte12-run- ejecuta la Parte12 (fine-tuning HF)"
 	@echo "  trino      - abre la CLI de Trino"
 
 setup-env:
@@ -42,6 +45,14 @@ silver:
 gold:
 	./scripts/run_gold.sh
 
+parte10-run:
+	./SBD/Parte10/run_parte10.sh $(ARGS)
+
+parte11-run:
+	./SBD/Parte11/run_parte11.sh $(ARGS)
+
+parte12-run:
+	./SBD/Parte12/run_parte12.sh $(ARGS)
+
 trino:
 	docker compose exec trino trino
-
